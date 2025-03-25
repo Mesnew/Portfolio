@@ -7,16 +7,24 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass"
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass"
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls"
 import { useRouter } from "next/navigation"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { ExternalLink } from "lucide-react"
 
 // Définition des planètes et leurs propriétés
 interface Planet {
   name: string
+  solarName: string // Nom du système solaire
   radius: number
   distance: number
   rotationSpeed: number
   orbitSpeed: number
   color: string
   path: string
+  description: string
+  diameter: string
+  distanceFromSun: string
+  orbitalPeriod: string
   texture?: string
   rings?: boolean
   moons?: { distance: number; radius: number; color: string }[]
@@ -35,6 +43,12 @@ export function SolarSystem3D() {
   const sceneRef = useRef<THREE.Scene | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const [followingPlanet, setFollowingPlanet] = useState<THREE.Mesh | null>(null)
+  const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null)
+  const animationRef = useRef<number | null>(null)
+  const initialCameraPositionRef = useRef<THREE.Vector3 | null>(null)
+  const initialControlsTargetRef = useRef<THREE.Vector3 | null>(null)
+  // Stocker les vitesses orbitales originales des planètes
+  const originalOrbitSpeedsRef = useRef<Map<THREE.Mesh, number>>(new Map())
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -43,49 +57,95 @@ export function SolarSystem3D() {
     const planets: Planet[] = [
       {
         name: "CV",
+        solarName: "Mercure",
         radius: 0.8,
         distance: 10,
         rotationSpeed: 0.01,
         orbitSpeed: 0.005,
-        color: "#4dabf7", // Bleu plus vif
+        color: "#c0c0c0", // Gris argenté
         path: "/cv",
+        description:
+          "La planète la plus proche du Soleil, caractérisée par des températures extrêmes et une surface criblée de cratères.",
+        diameter: "4 880 km",
+        distanceFromSun: "57,9 millions km",
+        orbitalPeriod: "88 jours",
       },
       {
         name: "Réalisations",
+        solarName: "Vénus",
         radius: 1.2,
         distance: 16,
         rotationSpeed: 0.008,
         orbitSpeed: 0.003,
-        color: "#fa5252", // Rouge plus vif
+        color: "#e39e54", // Jaune-orangé
         path: "/realisations",
+        description:
+          "Souvent appelée la jumelle de la Terre en raison de sa taille similaire, mais avec une atmosphère dense et toxique.",
+        diameter: "12 104 km",
+        distanceFromSun: "108,2 millions km",
+        orbitalPeriod: "225 jours",
       },
       {
         name: "Veille",
+        solarName: "Terre",
         radius: 1.0,
         distance: 22,
         rotationSpeed: 0.012,
         orbitSpeed: 0.002,
-        color: "#51cf66", // Vert plus vif
+        color: "#4dabf7", // Bleu
         path: "/veille",
-        rings: true,
+        description:
+          "Notre planète, la seule connue à abriter la vie, avec ses océans d'eau liquide et son atmosphère riche en oxygène.",
+        diameter: "12 756 km",
+        distanceFromSun: "149,6 millions km",
+        orbitalPeriod: "365,25 jours",
       },
       {
         name: "Contact",
+        solarName: "Mars",
         radius: 0.9,
         distance: 28,
         rotationSpeed: 0.009,
         orbitSpeed: 0.001,
-        color: "#cc5de8", // Violet plus vif
+        color: "#fa5252", // Rouge
         path: "/contact",
+        description:
+          "La planète rouge, avec ses calottes polaires et ses vallées asséchées, pourrait avoir abrité la vie dans le passé.",
+        diameter: "6 792 km",
+        distanceFromSun: "227,9 millions km",
+        orbitalPeriod: "687 jours",
       },
       {
         name: "Test",
-        radius: 0.7,
+        solarName: "Jupiter",
+        radius: 1.8,
         distance: 34,
         rotationSpeed: 0.015,
         orbitSpeed: 0.0008,
-        color: "#fcc419", // Jaune plus vif
+        color: "#fcc419", // Jaune-brun
         path: "/test",
+        description:
+          "La plus grande planète du système solaire, une géante gazeuse avec sa Grande Tache Rouge et ses nombreuses lunes.",
+        diameter: "142 984 km",
+        distanceFromSun: "778,5 millions km",
+        orbitalPeriod: "11,86 ans",
+        rings: true,
+      },
+      {
+        name: "Autre",
+        solarName: "Saturne",
+        radius: 1.6,
+        distance: 42,
+        rotationSpeed: 0.01,
+        orbitSpeed: 0.0006,
+        color: "#e9d8a6", // Beige-doré
+        path: "/test",
+        description:
+          "Célèbre pour ses magnifiques anneaux, cette géante gazeuse possède également un système complexe de lunes.",
+        diameter: "120 536 km",
+        distanceFromSun: "1,4 milliard km",
+        orbitalPeriod: "29,46 ans",
+        rings: true,
       },
     ]
 
@@ -99,6 +159,7 @@ export function SolarSystem3D() {
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000)
     camera.position.set(0, 30, 40)
     cameraRef.current = camera
+    initialCameraPositionRef.current = camera.position.clone()
 
     // Renderer setup
     const renderer = new THREE.WebGLRenderer({
@@ -125,26 +186,30 @@ export function SolarSystem3D() {
     )
     composer.addPass(bloomPass)
 
-    // Controls
+    // Modifier les paramètres des contrôles pour améliorer la rotation avec la souris
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
-    controls.dampingFactor = 0.05
-    controls.minDistance = 5
-    controls.maxDistance = 500
+    controls.dampingFactor = 0.1
+    controls.minDistance = 10
+    controls.maxDistance = 200
     controls.maxPolarAngle = Math.PI // Permettre une rotation verticale complète
-    controls.minPolarAngle = 0.1 // Éviter de passer sous le plan
+    controls.minPolarAngle = 0 // Permettre de passer au-dessus et en-dessous
     controls.autoRotate = false
     controls.enableRotate = true
-    controls.rotateSpeed = 1.2 // Augmenter la vitesse de rotation
+    controls.rotateSpeed = 0.5 // Réduire légèrement pour plus de précision
     controls.enableZoom = true
-    controls.zoomSpeed = 1.2
+    controls.zoomSpeed = 1.0
     controls.enablePan = true
-    controls.panSpeed = 1.2 // Augmenter la vitesse de déplacement latéral
-    controls.screenSpacePanning = true // Déplacement plus intuitif
+    controls.panSpeed = 0.8
+    controls.screenSpacePanning = true
+    controls.target.set(0, 0, 0) // Cibler le centre du soleil
+    initialControlsTargetRef.current = controls.target.clone()
     controlsRef.current = controls
 
     // Ajouter des contrôles clavier pour se déplacer dans la direction de la caméra
-    const keysPressed = { w: false, a: false, s: false, d: false, q: false, e: false }
+    // const keysPressed = { w: false, a: false, s: false, d: false, q: false, e: false }
+    // Ajouter des contrôles clavier pour se déplacer dans la direction de la caméra (configuration AZERTY)
+    const keysPressed = { z: false, q: false, s: false, d: false, a: false, e: false }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase()
@@ -162,45 +227,6 @@ export function SolarSystem3D() {
 
     window.addEventListener("keydown", handleKeyDown)
     window.addEventListener("keyup", handleKeyUp)
-
-    // Ajouter cette fonction après la création des contrôles
-    // Fonction pour se déplacer vers une planète
-    const focusOnPlanet = (planetMesh: THREE.Mesh) => {
-      if (!controlsRef.current) return
-
-      const planetPosition = new THREE.Vector3()
-      planetMesh.getWorldPosition(planetPosition)
-
-      // Calculer la position cible de la caméra
-      const distance = planetMesh.userData.radius * 5 + 5
-      const offset = new THREE.Vector3(distance, distance / 2, distance)
-
-      // Animation de déplacement
-      const startPosition = camera.position.clone()
-      const targetPosition = planetPosition.clone().add(offset)
-      const duration = 1.5 // secondes
-      const startTime = clock.getElapsedTime()
-
-      const animateCamera = () => {
-        const currentTime = clock.getElapsedTime()
-        const elapsed = currentTime - startTime
-
-        if (elapsed < duration) {
-          const t = elapsed / duration
-          const easeT = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t // easing
-
-          camera.position.lerpVectors(startPosition, targetPosition, easeT)
-          controls.target.lerp(planetPosition, easeT)
-
-          requestAnimationFrame(animateCamera)
-        } else {
-          camera.position.copy(targetPosition)
-          controls.target.copy(planetPosition)
-        }
-      }
-
-      animateCamera()
-    }
 
     // Starfield background
     const createStarfield = () => {
@@ -496,9 +522,14 @@ export function SolarSystem3D() {
           orbitSpeed: planet.orbitSpeed,
           rotationSpeed: planet.rotationSpeed,
           name: planet.name,
+          solarName: planet.solarName,
           path: planet.path,
           radius: planet.radius,
+          planetData: planet, // Stocker toutes les données de la planète
         }
+
+        // Stocker la vitesse orbitale originale
+        originalOrbitSpeedsRef.current.set(planetMesh, planet.orbitSpeed)
       })
 
       return planetMeshes
@@ -550,8 +581,163 @@ export function SolarSystem3D() {
 
     window.addEventListener("mousemove", handleMouseMove)
 
-    // Modifier le gestionnaire de clic pour utiliser la fonction focusOnPlanet
-    // Remplacer le gestionnaire de clic existant par celui-ci:
+    // Fonction pour faire un zoom sur une planète et arrêter son mouvement orbital
+    const zoomToPlanet = (planet: THREE.Mesh) => {
+      if (!cameraRef.current || !controlsRef.current) return
+
+      // Annuler toute animation en cours
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+        animationRef.current = null
+      }
+
+      // Désactiver les contrôles pendant l'animation
+      controlsRef.current.enabled = false
+
+      // Obtenir la position de la planète
+      const planetPosition = new THREE.Vector3()
+      planet.getWorldPosition(planetPosition)
+
+      // Calculer la distance de zoom basée sur le rayon de la planète
+      const radius = planet.userData.radius || 1
+      const zoomDistance = radius * 3 // Distance plus proche pour un gros plan
+
+      // Calculer la position de la caméra pour le gros plan
+      // Nous voulons être légèrement décalés pour voir la planète sous un angle intéressant
+      const offset = new THREE.Vector3(zoomDistance * 0.7, zoomDistance * 0.5, zoomDistance * 0.7)
+
+      // Position cible de la caméra
+      const targetPosition = planetPosition.clone().add(offset)
+
+      // Position et cible actuelles
+      const startPosition = cameraRef.current.position.clone()
+      const startTarget = controlsRef.current.target.clone()
+
+      // Durée de l'animation en secondes
+      const duration = 1.5
+      const startTime = clock.getElapsedTime()
+
+      // Arrêter le mouvement orbital de la planète sélectionnée
+      planet.userData.orbitSpeed = 0
+
+      // Mettre à jour les informations de la planète sélectionnée
+      setSelectedPlanet(planet.userData.planetData)
+
+      // Fonction d'animation
+      const animateZoom = () => {
+        const currentTime = clock.getElapsedTime()
+        const elapsed = currentTime - startTime
+
+        if (elapsed < duration) {
+          // Calculer la progression avec easing
+          const t = elapsed / duration
+          const easeT = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t // easing
+
+          // Interpoler la position de la caméra
+          cameraRef.current!.position.lerpVectors(startPosition, targetPosition, easeT)
+
+          // Interpoler la cible des contrôles
+          controlsRef.current!.target.lerpVectors(startTarget, planetPosition, easeT)
+
+          // Mettre à jour les contrôles
+          controlsRef.current!.update()
+
+          // Continuer l'animation
+          animationRef.current = requestAnimationFrame(animateZoom)
+        } else {
+          // Finaliser l'animation
+          cameraRef.current!.position.copy(targetPosition)
+          controlsRef.current!.target.copy(planetPosition)
+          controlsRef.current!.update()
+
+          // Réactiver les contrôles après l'animation
+          controlsRef.current!.enabled = true
+        }
+      }
+
+      // Démarrer l'animation
+      animationRef.current = requestAnimationFrame(animateZoom)
+    }
+
+    // Fonction pour revenir à la vue d'ensemble et restaurer le mouvement des planètes
+    const resetView = () => {
+      if (
+        !cameraRef.current ||
+        !controlsRef.current ||
+        !initialCameraPositionRef.current ||
+        !initialControlsTargetRef.current
+      )
+        return
+
+      // Annuler toute animation en cours
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+        animationRef.current = null
+      }
+
+      // Désactiver les contrôles pendant l'animation
+      controlsRef.current.enabled = false
+
+      // Position et cible actuelles
+      const startPosition = cameraRef.current.position.clone()
+      const startTarget = controlsRef.current.target.clone()
+
+      // Position et cible initiales
+      const targetPosition = initialCameraPositionRef.current.clone()
+      const targetTarget = new THREE.Vector3(0, 0, 0) // Toujours cibler le soleil
+
+      // Durée de l'animation en secondes
+      const duration = 1.5
+      const startTime = clock.getElapsedTime()
+
+      // Restaurer le mouvement orbital de toutes les planètes
+      planetsRef.current.forEach((planet) => {
+        const originalSpeed = originalOrbitSpeedsRef.current.get(planet)
+        if (originalSpeed !== undefined) {
+          planet.userData.orbitSpeed = originalSpeed
+        }
+      })
+
+      // Réinitialiser la planète sélectionnée
+      setSelectedPlanet(null)
+
+      // Fonction d'animation
+      const animateReset = () => {
+        const currentTime = clock.getElapsedTime()
+        const elapsed = currentTime - startTime
+
+        if (elapsed < duration) {
+          // Calculer la progression avec easing
+          const t = elapsed / duration
+          const easeT = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t // easing
+
+          // Interpoler la position de la caméra
+          cameraRef.current!.position.lerpVectors(startPosition, targetPosition, easeT)
+
+          // Interpoler la cible des contrôles
+          controlsRef.current!.target.lerpVectors(startTarget, targetTarget, easeT)
+
+          // Mettre à jour les contrôles
+          controlsRef.current!.update()
+
+          // Continuer l'animation
+          animationRef.current = requestAnimationFrame(animateReset)
+        } else {
+          // Finaliser l'animation
+          cameraRef.current!.position.copy(targetPosition)
+          controlsRef.current!.target.copy(targetTarget)
+          controlsRef.current!.update()
+
+          // Réactiver les contrôles après l'animation
+          controlsRef.current!.enabled = true
+        }
+      }
+
+      // Démarrer l'animation
+      animationRef.current = requestAnimationFrame(animateReset)
+    }
+
+    // Modifier le gestionnaire de clic
     let lastClickTime = 0
 
     const handleClick = () => {
@@ -567,32 +753,31 @@ export function SolarSystem3D() {
           if (Date.now() - lastClickTime < 300) {
             router.push(planet.userData.path)
           } else {
-            // Simple clic pour suivre la planète
-            console.log("Suivre la planète:", planet.userData.name)
-
-            // Désactiver immédiatement les contrôles
-            if (controlsRef.current) {
-              controlsRef.current.enabled = false
-            }
-
-            // Définir la planète à suivre
+            // Simple clic pour faire un gros plan sur la planète
+            console.log("Suivre la planète:", planet.userData.solarName)
             setFollowingPlanet(planet)
+            zoomToPlanet(planet)
           }
           lastClickTime = Date.now()
         }
       } else {
-        // Clic en dehors d'une planète - arrêter le suivi
+        // Clic en dehors d'une planète - revenir à la vue d'ensemble
         console.log("Arrêter de suivre")
         setFollowingPlanet(null)
-
-        // Réactiver les contrôles de la caméra
-        if (controlsRef.current) {
-          controlsRef.current.enabled = true
-        }
+        resetView()
       }
     }
 
     window.addEventListener("click", handleClick)
+
+    // Assurer que le zoom avec la molette fonctionne correctement
+    const handleWheel = (event: WheelEvent) => {
+      // Les contrôles OrbitControls gèrent déjà le zoom,
+      // mais nous pouvons ajouter des comportements personnalisés si nécessaire
+      event.preventDefault()
+    }
+
+    renderer.domElement.addEventListener("wheel", handleWheel, { passive: false })
 
     // Animation loop
     const clock = new THREE.Clock()
@@ -622,47 +807,15 @@ export function SolarSystem3D() {
         // Rotate planet
         planet.rotation.y += planet.userData.rotationSpeed
 
-        // Orbit around sun
-        planet.userData.orbitAngle += planet.userData.orbitSpeed
-        const orbitRadius = planetsDataRef.current.find((p) => p.name === planet.userData.name)?.distance || 10
+        // Orbit around sun (seulement si la vitesse orbitale n'est pas à zéro)
+        if (planet.userData.orbitSpeed > 0) {
+          planet.userData.orbitAngle += planet.userData.orbitSpeed
+          const orbitRadius = planetsDataRef.current.find((p) => p.name === planet.userData.name)?.distance || 10
 
-        planet.position.x = orbitRadius * Math.cos(planet.userData.orbitAngle)
-        planet.position.z = orbitRadius * Math.sin(planet.userData.orbitAngle)
+          planet.position.x = orbitRadius * Math.cos(planet.userData.orbitAngle)
+          planet.position.z = orbitRadius * Math.sin(planet.userData.orbitAngle)
+        }
       })
-
-      // Suivre la planète sélectionnée
-      if (followingPlanet && cameraRef.current && controlsRef.current) {
-        // Obtenir la position actuelle de la planète
-        const planetPosition = new THREE.Vector3()
-        followingPlanet.getWorldPosition(planetPosition)
-
-        // Calculer l'angle de la planète dans son orbite
-        const angle = followingPlanet.userData.orbitAngle
-
-        // Calculer la distance de suivi basée sur le rayon de la planète
-        const radius = followingPlanet.userData.radius || 1
-        const distance = radius * 5 + 3
-
-        // Calculer la position idéale de la caméra pour suivre la planète
-        // Positionner la caméra derrière la planète dans son orbite
-        const targetCameraPosition = new THREE.Vector3(
-          planetPosition.x - Math.cos(angle) * distance,
-          planetPosition.y + distance * 0.5, // Légèrement au-dessus
-          planetPosition.z - Math.sin(angle) * distance,
-        )
-
-        // Déplacer la caméra vers cette position
-        cameraRef.current.position.lerp(targetCameraPosition, 0.05)
-
-        // Faire regarder la caméra directement vers la planète
-        controlsRef.current.target.copy(planetPosition)
-
-        // Mettre à jour les contrôles
-        controlsRef.current.update()
-
-        // Désactiver explicitement les contrôles à chaque frame pendant le suivi
-        controlsRef.current.enabled = false
-      }
 
       // Check for planet hover
       if (cameraRef.current && sceneRef.current) {
@@ -671,7 +824,7 @@ export function SolarSystem3D() {
 
         if (intersects.length > 0) {
           const planet = intersects[0].object
-          setHoveredPlanet(planet.userData.name)
+          setHoveredPlanet(planet.userData.solarName)
           document.body.style.cursor = "pointer"
         } else {
           setHoveredPlanet(null)
@@ -699,12 +852,12 @@ export function SolarSystem3D() {
         right.y = 0 // Restreindre le mouvement vertical pour les touches A/D
         right.normalize().multiplyScalar(moveSpeed)
 
-        // Appliquer les mouvements
-        if (keysPressed.w) camera.position.add(forward)
+        // Appliquer les mouvements (configuration AZERTY)
+        if (keysPressed.z) camera.position.add(forward)
         if (keysPressed.s) camera.position.sub(forward)
-        if (keysPressed.a) camera.position.sub(right)
+        if (keysPressed.q) camera.position.sub(right)
         if (keysPressed.d) camera.position.add(right)
-        if (keysPressed.q) camera.position.y -= moveSpeed
+        if (keysPressed.a) camera.position.y -= moveSpeed
         if (keysPressed.e) camera.position.y += moveSpeed
       }
 
@@ -721,6 +874,11 @@ export function SolarSystem3D() {
       window.removeEventListener("click", handleClick)
       window.removeEventListener("keydown", handleKeyDown)
       window.removeEventListener("keyup", handleKeyUp)
+      renderer.domElement.removeEventListener("wheel", handleWheel)
+
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+      }
 
       if (containerRef.current) {
         containerRef.current.removeChild(renderer.domElement)
@@ -761,6 +919,7 @@ export function SolarSystem3D() {
     }
   }, [router])
 
+  // Ajouter un message d'aide pour la rotation
   return (
     <>
       <div ref={containerRef} className="fixed top-0 left-0 w-full h-full -z-10" />
@@ -776,10 +935,60 @@ export function SolarSystem3D() {
           {hoveredPlanet}
         </div>
       )}
+
+      {/* Carte d'information de la planète */}
+      {selectedPlanet && (
+        <div className="fixed bottom-4 left-4 z-20 max-w-sm">
+          <Card className="bg-black/70 backdrop-blur-sm border-primary/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xl flex items-center" style={{ color: selectedPlanet.color }}>
+                {selectedPlanet.solarName}
+              </CardTitle>
+              <CardDescription className="text-white/80">Section: {selectedPlanet.name}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 pb-4">
+              <p className="text-white/90 text-sm">{selectedPlanet.description}</p>
+
+              <div className="grid grid-cols-2 gap-2 text-xs text-white/80">
+                <div>
+                  <p className="font-semibold">Diamètre</p>
+                  <p>{selectedPlanet.diameter}</p>
+                </div>
+                <div>
+                  <p className="font-semibold">Distance du Soleil</p>
+                  <p>{selectedPlanet.distanceFromSun}</p>
+                </div>
+                <div>
+                  <p className="font-semibold">Période orbitale</p>
+                  <p>{selectedPlanet.orbitalPeriod}</p>
+                </div>
+              </div>
+
+              <Button
+                size="sm"
+                className="w-full"
+                onClick={() => router.push(selectedPlanet.path)}
+                style={{
+                  backgroundColor: selectedPlanet.color,
+                  color: "#000",
+                  borderColor: "transparent",
+                }}
+              >
+                Visiter {selectedPlanet.name} <ExternalLink className="ml-2 h-3 w-3" />
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 text-center text-white/80 bg-black/50 px-4 py-2 rounded-full text-sm backdrop-blur-sm z-10">
-        <p>Cliquez sur une planète pour la suivre • Double-cliquez pour naviguer</p>
-        <p className="text-xs mt-1">Cliquez ailleurs pour arrêter de suivre</p>
-        <p className="text-xs mt-1">Souris: Rotation (clic gauche) • Zoom (molette) • Déplacement (clic droit)</p>
+        <p>Cliquez sur une planète pour faire un gros plan • Double-cliquez pour naviguer</p>
+        <p className="text-xs mt-1">Cliquez ailleurs pour revenir à la vue d'ensemble</p>
+        <p className="text-xs mt-1">
+          <strong>Maintenir clic gauche + déplacer</strong> pour tourner autour du système
+        </p>
+        <p className="text-xs mt-1">Molette pour zoomer • Clic droit + déplacer pour se déplacer latéralement</p>
+        <p className="text-xs mt-1">Touches: ZQSD pour se déplacer • A pour descendre • E pour monter</p>
       </div>
     </>
   )
